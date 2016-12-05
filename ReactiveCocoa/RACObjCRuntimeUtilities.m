@@ -3,6 +3,32 @@
 #import <objc/message.h>
 #import <objc/runtime.h>
 
+IMP _racLifetimeNewDeallocImplementation(Class baseClass, IMP** existingImplRef, void* lifetimeTokenKey) {
+	__block IMP existingImpl = nil;
+	SEL deallocSEL = sel_registerName("dealloc");
+
+	IMP newImpl = imp_implementationWithBlock(^(__unsafe_unretained id self) {
+		objc_setAssociatedObject(self, lifetimeTokenKey, nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+
+		if (existingImpl != NULL) {
+			((void(*)(__unsafe_unretained id, SEL)) existingImpl)(self, deallocSEL);
+		} else {
+			struct objc_super superInfo = {
+				.receiver = self,
+				.super_class = class_getSuperclass(baseClass)
+			};
+
+			((void(*)(struct objc_super*, SEL)) objc_msgSendSuper)(&superInfo, deallocSEL);
+		}
+	});
+
+	// Pass the reference only after the block is implicitly copied to the heap
+	// due to `imp_implementationWithBlock`.
+	*existingImplRef = &existingImpl;
+
+	return newImpl;
+}
+
 NSString * const RACSelectorSignalErrorDomain = @"RACSelectorSignalErrorDomain";
 const NSInteger RACSelectorSignalErrorMethodSwizzlingRace = 1;
 const NSExceptionName RACSwizzleException = @"RACSwizzleException";
